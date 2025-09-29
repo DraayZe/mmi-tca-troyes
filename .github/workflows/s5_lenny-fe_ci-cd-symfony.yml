@@ -1,4 +1,4 @@
-name: Symfony CI
+name: Lenny Symfony CI et Build
 
 on:
   push:
@@ -6,6 +6,9 @@ on:
       - main
     paths:
       - "ressources/s5/lenny-fe/projets/ci-cd-symfony/**"
+  pull_request:
+    branches:
+      - main
 
 defaults:
   run:
@@ -23,8 +26,18 @@ jobs:
         with:
           php-version: "8.2"
           coverage: pcov
+          extensions: mbstring, xml, curl, zip, bcmath, intl, ctype
+          tools: composer:v2
 
-      - name: Install dependencies
+      - name: Check PHP & Composer versions
+        run: |
+          php -v
+          composer -V
+
+      # -------------------
+      # CI - Code Quality & Tests
+      # -------------------
+      - name: Install dependencies (dev)
         run: composer install --no-progress --prefer-dist --no-scripts
 
       - name: Run PHP-CS-Fixer
@@ -41,4 +54,46 @@ jobs:
 
       - name: Audit de sécurité
         run: composer audit --format=json --no-interaction
-        continue-on-error: true # Permettre au CI de continuer même si des vulnérabilités sont détectées
+        continue-on-error: true
+
+      # -------------------
+      # BUILD - Artefact Symfony
+      # -------------------
+      - name: Install prod dependencies
+        run: composer install --no-dev --optimize-autoloader --ignore-platform-reqs
+
+      - name: Dump environment variables for production
+        run: composer dump-env prod
+        env:
+          APP_ENV: prod
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Install JavaScript assets via ImportMap
+        run: php bin/console importmap:install
+
+      - name: Compile assets with AssetMapper
+        run: php bin/console asset-map:compile
+
+      - name: Create Artifact Archive
+        run: |
+          tar -czvf ../../symfony-artifact-r1.tar.gz \
+            --exclude=.git \
+            --exclude=.github \
+            --exclude=node_modules \
+            --exclude=var/cache/* \
+            --exclude=var/log/* \
+            --exclude=tests \
+            --exclude=.env \
+            --exclude=docker \
+            --exclude=docker-compose.yml \
+            --exclude=README.md \
+            --exclude=*.log \
+            --exclude=*.gitignore \
+            --exclude=composer.lock \
+            .
+
+      - name: Upload artifact for deployment jobs
+        uses: actions/upload-artifact@v4
+        with:
+          name: symfony-artifact-r1
+          path: symfony-artifact-r1.tar.gz
